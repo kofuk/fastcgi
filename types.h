@@ -1,6 +1,7 @@
 #ifndef TYPES_H
 #define TYPES_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -22,6 +23,7 @@ typedef struct {
     u16 request_id;
     hashtable *headers;
     vector *stdin;
+    bool initialized;
 } request;
 
 typedef struct {

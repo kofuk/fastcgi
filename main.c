@@ -327,6 +327,7 @@ static void handle_fcgi(int fd) {
 
             if (hdr.content_length == 0) {
                 write_response(fd, hdr.request_id, handle_request(req));
+                request_pool_erase(pool, hdr.request_id);
             }
         }
         default: {

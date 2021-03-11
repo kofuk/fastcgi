@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "hashtable.h"
+#include "types.h"
 #include "vector.h"
 
 struct request_pool {
@@ -29,22 +30,37 @@ void request_pool_free(request_pool *obj) {
     free(obj);
 }
 
-void request_pool_add(request_pool *pool,  u16 request_id) {
+static void initialize_request(request *req, request_pool *pool,
+                               u16 request_id) {
+    req->request_id = request_id;
+    req->headers = hashtable_new();
+    req->stdin = vector_new();
+    req->fd = pool->write_fd;
+    req->initialized = true;
+}
+
+void request_pool_add(request_pool *pool, u16 request_id) {
+    /* If there's empty slot in request array,
+       reuse it. */
+    for (size_t i = 0; i < pool->size; ++i) {
+        if (!pool->requests[i].initialized) {
+            initialize_request(&pool->requests[i], pool, request_id);
+            return;
+        }
+    }
+
     if (pool->cap <= pool->size) {
         pool->cap <<= 1;
         pool->requests = realloc(pool->requests, pool->cap * sizeof(request));
     }
-    memset(&pool->requests[pool->size], 0, sizeof(request));
-    pool->requests[pool->size].request_id = request_id;
-    pool->requests[pool->size].headers = hashtable_new();
-    pool->requests[pool->size].stdin = vector_new();
-    pool->requests[pool->size].fd = pool->write_fd;
+    initialize_request(&pool->requests[pool->size], pool, request_id);
     pool->size++;
 }
 
 request *request_pool_get(request_pool *pool, u16 request_id) {
     for (size_t i = 0; i < pool->size; ++i) {
-        if (pool->requests[i].request_id == request_id) {
+        if (pool->requests[i].request_id == request_id &&
+            pool->requests[i].initialized) {
             return &pool->requests[i];
         }
     }
@@ -52,5 +68,13 @@ request *request_pool_get(request_pool *pool, u16 request_id) {
 }
 
 void request_pool_erase(request_pool *pool, u16 request_id) {
-    
+    for (size_t i = 0; i < pool->size; ++i) {
+        if (pool->requests[i].initialized) {
+            if (pool->requests[i].request_id == request_id) {
+                hashtable_free(pool->requests[i].headers);
+                vector_free(pool->requests[i].stdin, true);
+                pool->requests[i].initialized = false;
+            }
+        }
+    }
 }
