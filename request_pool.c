@@ -25,7 +25,23 @@ request_pool *request_pool_new(int write_fd) {
     return result;
 }
 
+static void request_free(request *req) {
+    hashtable_free(req->headers);
+    vector_free(req->stdin, true);
+    req->initialized = false;
+}
+
 void request_pool_free(request_pool *obj) {
+    if (obj == NULL) {
+        return;
+    }
+
+    for (size_t i = 0; i < obj->size; ++i) {
+        if (obj->requests[i].initialized) {
+            request_free(&obj->requests[i]);
+        }
+    }
+
     free(obj->requests);
     free(obj);
 }
@@ -71,9 +87,7 @@ void request_pool_erase(request_pool *pool, u16 request_id) {
     for (size_t i = 0; i < pool->size; ++i) {
         if (pool->requests[i].initialized) {
             if (pool->requests[i].request_id == request_id) {
-                hashtable_free(pool->requests[i].headers);
-                vector_free(pool->requests[i].stdin, true);
-                pool->requests[i].initialized = false;
+                request_free(&pool->requests[i]);
             }
         }
     }
