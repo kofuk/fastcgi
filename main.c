@@ -108,13 +108,20 @@ static void discard_input(int fd, size_t len) {
     }
 }
 
-static u32 read_u32(void *buf) {
-    u8 tmp[4];
-    memcpy(tmp, buf, 4);
-    reverse_order(tmp, 4);
+static u32 decode_u32(u8 const *buf) {
+    u8 tmp[sizeof(u32)];
+    memcpy(tmp, buf, sizeof(u32));
+    tmp[0] &= 0x7F;
+    reverse_order(tmp, sizeof(u32));
     u32 result;
-    memcpy(&result, tmp, 4);
+    memcpy(&result, tmp, sizeof(u32));
     return result;
+}
+
+static void encode_u32(u32 val, u8 *out) {
+    memcpy(out, &val, sizeof(u32));
+    reverse_order(out, sizeof(u32));
+    out[0] |= 0x80;
 }
 
 static bool read_request_params(int fd, size_t content_length, hashtable *out) {
@@ -149,7 +156,7 @@ static bool read_request_params(int fd, size_t content_length, hashtable *out) {
                     if (n < 4) {
                         goto next;
                     }
-                    key_len = read_u32(buf + used);
+                    key_len = decode_u32(buf + used);
                     local_used += 4;
                 } else {
                     key_len = *(buf + used);
@@ -164,7 +171,7 @@ static bool read_request_params(int fd, size_t content_length, hashtable *out) {
                     if (n < 4) {
                         goto next;
                     }
-                    val_len = read_u32(buf + used + local_used);
+                    val_len = decode_u32(buf + used + local_used);
                     local_used += 4;
                 } else {
                     val_len = *(buf + used + local_used);
