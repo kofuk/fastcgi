@@ -52,4 +52,17 @@ typedef struct {
 #define FCGI_STATUS_OVERLOADED 2
 #define FCGI_STATUS_UNKNOWN_ROLE 3
 
+typedef struct {
+    u8 type;
+    u8 reserved[7];
+} fcgi_body_unknown_type;
+
+// Utility functions to initialize these structs easily.
+
+void *make_end_request_body(fcgi_body_end_request *out, u32 app_status,
+                            u8 protocol_status);
+
+void *make_unknown_type_body(fcgi_body_unknown_type *out, u8 type);
+
+
 #endif

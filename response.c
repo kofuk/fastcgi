@@ -24,13 +24,6 @@ void response_add_header(response *resp, char const *key, char const *val) {
     vector_append(resp->header, (u8 const *)"\r\n", 2);
 }
 
-void response_terminate_header(response *resp) {
-    vector_append(resp->header, (u8 const *)"\r\n", 2);
-
-    /* We don't want \r\n to be included to the length of the header. */
-    resp->header->len -= 2;
-}
-
 vector *response_get_header(response *resp) {
     return resp->header;
 }

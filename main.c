@@ -14,6 +14,7 @@
 #include "response.h"
 #include "types.h"
 #include "vector.h"
+#include "writer.h"
 
 static inline void reverse_array(u8 *arr, size_t const len) {
     for (size_t i = 0; i < len / 2; ++i) {
@@ -52,48 +53,6 @@ static bool read_begin_request_body(int fd, fcgi_body_begin_request *out) {
     }
     reverse_order(&out->role, sizeof(u16));
     return true;
-}
-
-static void write_error(int fd, u16 request_id) {
-    fcgi_header hdr = {0};
-    hdr.type = FCGI_TYPE_END_REQUEST;
-    hdr.version = FCGI_VERSION_1;
-    hdr.content_length = reverse_order_v_16((u16)sizeof(fcgi_body_end_request));
-    hdr.request_id = reverse_order_v_16(request_id);
-    write(fd, &hdr, sizeof(fcgi_header));
-
-    fcgi_body_end_request body = {0};
-    body.app_status = 0;
-    body.protocol_status = FCGI_STATUS_OVERLOADED;
-    write(fd, &body, sizeof(fcgi_body_end_request));
-}
-
-static void write_unsupported_role(int fd, u16 request_id) {
-    fcgi_header hdr = {0};
-    hdr.type = FCGI_TYPE_END_REQUEST;
-    hdr.version = FCGI_VERSION_1;
-    hdr.content_length = reverse_order_v_16((u16)sizeof(fcgi_body_end_request));
-    hdr.request_id = reverse_order_v_16(request_id);
-    write(fd, &hdr, sizeof(fcgi_header));
-
-    fcgi_body_end_request body = {0};
-    body.app_status = 0;
-    body.protocol_status = FCGI_STATUS_UNKNOWN_ROLE;
-    write(fd, &body, sizeof(fcgi_body_end_request));
-}
-
-static void write_complete_request(int fd, u16 request_id) {
-    fcgi_header hdr = {0};
-    hdr.type = FCGI_TYPE_END_REQUEST;
-    hdr.version = FCGI_VERSION_1;
-    hdr.content_length = reverse_order_v_16((u16)sizeof(fcgi_body_end_request));
-    hdr.request_id = reverse_order_v_16(request_id);
-    write(fd, &hdr, sizeof(fcgi_header));
-
-    fcgi_body_end_request body = {0};
-    body.app_status = 0;
-    body.protocol_status = reverse_order_v_16(FCGI_STATUS_REQUEST_COMPLETE);
-    write(fd, &body, sizeof(fcgi_body_end_request));
 }
 
 static void discard_input(int fd, size_t len) {
@@ -197,8 +156,6 @@ static bool read_request_params(int fd, size_t content_length, hashtable *out) {
 
             hashtable_put(out, key, val);
 
-            printf("%s=%s\n", key, val);
-
             used += local_used;
             n -= local_used;
         }
@@ -242,49 +199,58 @@ static response *handle_request(request *req) {
     return resp;
 }
 
-static bool write_response(int fd, u16 request_id, response *resp) {
-    fcgi_header hdr = {0};
-    hdr.request_id = reverse_order_v_16(request_id);
-    hdr.type = FCGI_TYPE_STDOUT;
-
-    response_terminate_header(resp);
+static bool write_response(writer *writer, u16 request_id, response *resp) {
+    writer_begin(writer);
 
     vector *head = response_get_header(resp);
     vector *body = response_get_body(resp);
-    if (head->len + body->len + 2 < 65536) {
-        hdr.content_length = reverse_order_v_16((u16)head->len + body->len + 2);
-    } else {
-        // TODO: implement
-        __builtin_trap();
+
+    u8 *data = malloc(head->len + body->len + 2);
+    memcpy(data, head->data, head->len);
+    memcpy(data + head->len, "\r\n", 2);
+    memcpy(data + head->len + 2, body->data, body->len);
+    size_t len = head->len + body->len + 2;
+    size_t wrote = 0;
+
+    while (wrote < len) {
+        size_t nwrite;
+        if (len - wrote > 65535) {
+            nwrite = 65535;
+        } else {
+            nwrite = len;
+        }
+
+        writer_write_header(writer, FCGI_TYPE_STDOUT, request_id, nwrite);
+        writer_write(writer, data + wrote, nwrite);
+        wrote += nwrite;
     }
 
-    write(fd, &hdr, sizeof(fcgi_header));
-    write(fd, head->data, head->len + 2); /* Additional 2 bytes for \r\n */
-    write(fd, body->data, body->len);
+    writer_write_header(writer, FCGI_TYPE_STDOUT, request_id, 0);
 
-    hdr.type = FCGI_TYPE_END_REQUEST;
-    hdr.content_length = reverse_order_v_16((u16)sizeof(fcgi_body_end_request));
-    write(fd, &hdr, sizeof(fcgi_header));
+    free(data);
 
-    fcgi_body_end_request end_body = {0};
-    end_body.protocol_status = FCGI_STATUS_REQUEST_COMPLETE;
-    write(fd, &end_body, sizeof(fcgi_body_end_request));
+    writer_write_header(writer, FCGI_TYPE_END_REQUEST, request_id,
+                        (u16)sizeof(fcgi_body_end_request));
+    fcgi_body_end_request end_body;
+    writer_write(
+        writer,
+        make_end_request_body(&end_body, 0, FCGI_STATUS_REQUEST_COMPLETE),
+        sizeof(fcgi_body_end_request));
+
+    writer_flush(writer);
 
     return true;
 }
 
 static void handle_fcgi(int fd) {
-    request_pool *pool = request_pool_new(fd);
+    writer *writer = writer_new(fd);
+    request_pool *pool = request_pool_new(writer);
 
     for (;;) {
         fcgi_header hdr;
         if (!read_fcgi_header(fd, &hdr)) {
             break;
         }
-        printf("version=%d, type=%d, request_id=%d, content_length=%d, "
-               "padding_length=%d\n",
-               hdr.version, hdr.type, hdr.request_id, hdr.content_length,
-               hdr.padding_length);
 
         switch (hdr.type) {
         case FCGI_TYPE_BEGIN_REQUEST: {
@@ -297,7 +263,16 @@ static void handle_fcgi(int fd) {
             }
 
             if (body.role != FCGI_ROLE_RESPONDER) {
-                write_unsupported_role(fd, hdr.request_id);
+                writer_begin(writer);
+                writer_write_header(writer, FCGI_TYPE_END_REQUEST,
+                                    hdr.request_id,
+                                    sizeof(fcgi_body_end_request));
+                fcgi_body_end_request body;
+                writer_write(
+                    writer,
+                    make_end_request_body(&body, 0, FCGI_STATUS_UNKNOWN_ROLE),
+                    (u16)sizeof(fcgi_body_end_request));
+                writer_flush(writer);
                 continue;
             }
 
@@ -306,7 +281,17 @@ static void handle_fcgi(int fd) {
         }
         case FCGI_TYPE_ABORT_REQUEST: {
             discard_input(fd, (size_t)hdr.content_length + hdr.padding_length);
-            write_complete_request(fd, hdr.request_id);
+
+            writer_begin(writer);
+            writer_write_header(writer, FCGI_TYPE_END_REQUEST, hdr.request_id,
+                                sizeof(fcgi_body_end_request));
+            fcgi_body_end_request body;
+            writer_write(
+                writer,
+                make_end_request_body(&body, 0, FCGI_STATUS_REQUEST_COMPLETE),
+                (u16)sizeof(fcgi_body_end_request));
+            writer_flush(writer);
+
             request_pool_erase(pool, hdr.request_id);
             break;
         }
@@ -315,7 +300,6 @@ static void handle_fcgi(int fd) {
             if (req == NULL) {
                 discard_input(fd,
                               (size_t)hdr.content_length + hdr.padding_length);
-                write_error(fd, hdr.request_id);
                 continue;
             }
 
@@ -331,7 +315,6 @@ static void handle_fcgi(int fd) {
             if (req == NULL) {
                 discard_input(fd,
                               (size_t)hdr.content_length + hdr.padding_length);
-                write_error(fd, hdr.request_id);
                 continue;
             }
 
@@ -341,7 +324,7 @@ static void handle_fcgi(int fd) {
             }
 
             if (hdr.content_length == 0) {
-                write_response(fd, hdr.request_id, handle_request(req));
+                write_response(writer, hdr.request_id, handle_request(req));
                 request_pool_erase(pool, hdr.request_id);
 
                 if (!(bool)(req->flags & FCGI_FLAG_KEEP_CONN)) {
@@ -350,12 +333,19 @@ static void handle_fcgi(int fd) {
             }
         }
         default: {
-            discard_input(fd, (size_t)hdr.content_length + hdr.padding_length);
+            writer_begin(writer);
+            writer_write_header(writer, FCGI_TYPE_UNKNOWN_TYPE, hdr.request_id,
+                                sizeof(fcgi_body_end_request));
+            fcgi_body_unknown_type body;
+            writer_write(writer, make_unknown_type_body(&body, hdr.type),
+                         (u16)sizeof(fcgi_body_unknown_type));
+            writer_flush(writer);
         }
         }
     }
 out:
     request_pool_free(pool);
+    writer_free(writer);
 }
 
 int main(int argc, char **argv) {
@@ -399,12 +389,9 @@ int main(int argc, char **argv) {
             continue;
         }
 
-        puts("accepted!");
-
         handle_fcgi(fd);
 
         close(fd);
-        puts("closed!");
     }
 
     return 0;

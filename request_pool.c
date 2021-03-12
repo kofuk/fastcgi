@@ -12,15 +12,15 @@ struct request_pool {
     request *requests;
     size_t cap;
     size_t size;
-    int write_fd;
+    writer *writer;
 };
 
-request_pool *request_pool_new(int write_fd) {
+request_pool *request_pool_new(writer *writer) {
     request_pool *result = malloc(sizeof(request_pool));
     memset(result, 0, sizeof(request_pool));
     result->cap = 2;
     result->requests = malloc(result->cap * sizeof(request));
-    result->write_fd = write_fd;
+    result->writer = writer;
 
     return result;
 }
@@ -51,7 +51,6 @@ static void initialize_request(request *req, request_pool *pool, u16 request_id,
     req->request_id = request_id;
     req->headers = hashtable_new();
     req->stdin = vector_new();
-    req->fd = pool->write_fd;
     req->flags = flags;
     req->initialized = true;
 }

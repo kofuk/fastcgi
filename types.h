@@ -19,7 +19,6 @@ typedef struct {
 } vector;
 
 typedef struct {
-    int fd;
     u16 request_id;
     hashtable *headers;
     vector *stdin;

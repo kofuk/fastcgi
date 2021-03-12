@@ -6,6 +6,9 @@
 
 #include <unistd.h>
 
+#include "endian.h"
+#include "fcgi_proto.h"
+#include "response.h"
 #include "types.h"
 
 struct writer {
@@ -21,23 +24,29 @@ writer *writer_new(int fd) {
     return result;
 }
 
-void writer_free(writer *obj, bool close_fd) {
+static inline bool internal_flush(writer *writer) {
+    size_t off = 0;
+    while (writer->nbuffered > 0) {
+        ssize_t n = write(writer->fd, writer->buf + off, writer->nbuffered);
+        if (n < 0) {
+            return false;
+        }
+        writer->nbuffered -= n;
+        off += n;
+    }
+    return true;
+}
+
+void writer_begin(writer *writer) {}
+
+void writer_flush(writer *writer) { internal_flush(writer); }
+
+void writer_free(writer *obj) {
     if (obj->nbuffered != 0) {
         writer_flush(obj);
     }
 
     free(obj);
-}
-
-static inline bool internal_flush(writer *writer) {
-    while (writer->nbuffered > 0) {
-        ssize_t n = write(writer->fd, writer->buf, writer->nbuffered);
-        if (n < 0) {
-            return false;
-        }
-        writer->nbuffered -= n;
-    }
-    return true;
 }
 
 void writer_write(writer *writer, void const *buf, size_t count) {
@@ -54,9 +63,16 @@ void writer_write(writer *writer, void const *buf, size_t count) {
         memcpy(writer->buf + writer->nbuffered, buf, copy_count);
         count -= copy_count;
         buf += copy_count;
+        writer->nbuffered += copy_count;
     }
 }
 
-void writer_flush(writer *writer) {
-    internal_flush(writer);
+void writer_write_header(writer *w, u8 type, u16 request_id,
+                         u16 content_length) {
+    fcgi_header hdr = {0};
+    hdr.version = FCGI_VERSION_1;
+    hdr.type = type;
+    write_u16(request_id, &hdr.request_id);
+    write_u16(content_length, &hdr.content_length);
+    writer_write(w, &hdr, sizeof(fcgi_header));
 }
