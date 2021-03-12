@@ -284,9 +284,13 @@ static void handle_fcgi(int fd) {
             if (hdr.padding_length != 0) {
                 discard_input(fd, (size_t)hdr.padding_length);
             }
-            printf("role=%d, flags=%d\n", body.role, body.flags);
 
-            request_pool_add(pool, hdr.request_id);
+            if (body.role != FCGI_ROLE_RESPONDER) {
+                write_unsupported_role(fd, hdr.request_id);
+                continue;
+            }
+
+            request_pool_add(pool, hdr.request_id, body.flags);
             break;
         }
         case FCGI_TYPE_ABORT_REQUEST: {
@@ -328,6 +332,10 @@ static void handle_fcgi(int fd) {
             if (hdr.content_length == 0) {
                 write_response(fd, hdr.request_id, handle_request(req));
                 request_pool_erase(pool, hdr.request_id);
+
+                if (!(bool)(req->flags & FCGI_FLAG_KEEP_CONN)) {
+                    goto out;
+                }
             }
         }
         default: {

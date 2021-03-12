@@ -46,21 +46,22 @@ void request_pool_free(request_pool *obj) {
     free(obj);
 }
 
-static void initialize_request(request *req, request_pool *pool,
-                               u16 request_id) {
+static void initialize_request(request *req, request_pool *pool, u16 request_id,
+                               u8 flags) {
     req->request_id = request_id;
     req->headers = hashtable_new();
     req->stdin = vector_new();
     req->fd = pool->write_fd;
+    req->flags = flags;
     req->initialized = true;
 }
 
-void request_pool_add(request_pool *pool, u16 request_id) {
+void request_pool_add(request_pool *pool, u16 request_id, u8 flags) {
     /* If there's empty slot in request array,
        reuse it. */
     for (size_t i = 0; i < pool->size; ++i) {
         if (!pool->requests[i].initialized) {
-            initialize_request(&pool->requests[i], pool, request_id);
+            initialize_request(&pool->requests[i], pool, request_id, flags);
             return;
         }
     }
@@ -69,7 +70,7 @@ void request_pool_add(request_pool *pool, u16 request_id) {
         pool->cap <<= 1;
         pool->requests = realloc(pool->requests, pool->cap * sizeof(request));
     }
-    initialize_request(&pool->requests[pool->size], pool, request_id);
+    initialize_request(&pool->requests[pool->size], pool, request_id, flags);
     pool->size++;
 }
 

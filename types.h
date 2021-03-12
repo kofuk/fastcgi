@@ -23,6 +23,7 @@ typedef struct {
     u16 request_id;
     hashtable *headers;
     vector *stdin;
+    u8 flags;
     bool initialized;
 } request;
 
