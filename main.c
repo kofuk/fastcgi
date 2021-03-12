@@ -202,8 +202,12 @@ static bool read_request_params(int fd, size_t content_length, hashtable *out) {
             used += local_used;
             n -= local_used;
         }
-    next:;
-        memmove(buf, buf + used, n);
+    next:
+        if (n <= used) {
+            memcpy(buf, buf + used, n);
+        } else {
+            memmove(buf, buf + used, n);
+        }
         off = n;
     }
 
