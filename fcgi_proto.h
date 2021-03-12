@@ -25,7 +25,7 @@ typedef struct {
 #define FCGI_TYPE_GET_VALUES 9
 #define FCGI_TYPE_GET_VALUES_RESULT 10
 #define FCGI_TYPE_UNKNOWN_TYPE 11
-#define FCGI_MAXTYPE (FCGI_UNKNOWN_TYPE)
+#define FCGI_MAXTYPE (FCGI_TYPE_UNKNOWN_TYPE)
 
 #define FCGI_NULL_REQUEST_ID 0
 
@@ -45,7 +45,7 @@ typedef struct {
     u32 app_status;
     u8 protocol_status;
     u8 reserved[3];
-} fcgi_body_end_request;
+} __attribute__((packed)) fcgi_body_end_request;
 
 #define FCGI_STATUS_REQUEST_COMPLETE 0
 #define FCGI_STATUS_CANT_MPX_CONN 1
